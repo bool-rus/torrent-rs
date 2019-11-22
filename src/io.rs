@@ -172,6 +172,10 @@ impl<Q, A> MessageChannel<Q, A> {
 mod test {
     use super::*;
     use async_std::task;
+    use bytes::{BytesMut, BufMut};
+    use nom::AsBytes;
+    use futures_util::StreamExt;
+
     #[test]
     fn test_message_channel() {
         task::block_on(async {
@@ -181,5 +185,36 @@ mod test {
             their.send(2).await;
             assert_eq!(mine.recv().await, Some(2));
         })
+    }
+    fn as_read<R: Read>(r:R) -> impl Read { r }
+    #[test]
+    fn test_stream() {
+        let mut buf = BytesMut::with_capacity(1024usize);
+        let messages = vec![
+            PeerMessage::KeepAlive,
+            PeerMessage::Request {
+                block: 1,
+                offset: 5,
+                length: 40
+            },
+            PeerMessage::Bitfield(vec![1,2,3,4,5,6,7]),
+            PeerMessage::Interested,
+            PeerMessage::Unchoke,
+            PeerMessage::Piece {
+                block: 5,
+                offset: 23,
+                data: vec![1u8,23,3,13,45,1,34,23,52,10].into()
+            }
+        ];
+        messages.iter().for_each(|msg| {buf.put(msg.clone())});
+        let read = as_read(buf.as_bytes());
+        let mut stream = MessageStream::from(read);
+        task::block_on(async move {
+            for msg in messages {
+                let item = stream.next().await.unwrap();
+                assert_eq!(item, msg );
+            };
+        })
+
     }
 }

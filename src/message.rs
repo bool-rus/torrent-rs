@@ -1,5 +1,5 @@
 use super::*;
-use bytes::{Bytes, BytesMut, BufMut};
+use bytes::{Bytes, BytesMut, BufMut, IntoBuf};
 
 pub type TorrentExtentions = [u8; 8];
 
@@ -220,6 +220,14 @@ impl Into<Bytes> for PeerMessage {
                 ret.into()
             }
         }
+    }
+}
+
+impl IntoBuf for PeerMessage {
+    type Buf = std::io::Cursor<Bytes>;
+
+    fn into_buf(self) -> Self::Buf {
+        Into::<Bytes>::into(self).into_buf()
     }
 }
 
