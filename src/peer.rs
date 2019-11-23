@@ -6,10 +6,11 @@ use async_std::net::{TcpStream};
 use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
-use async_std::sync::{Arc, Sender, Receiver, RwLock};
+use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
 use futures_util::{AsyncReadExt, StreamExt};
 use futures_util::SinkExt;
 use crate::io::*;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Debug, Fail)]
 pub enum PeerError {
@@ -19,8 +20,12 @@ pub enum PeerError {
     Simple(String),
     #[fail(display = "Handshake error")]
     Handshake,
+    #[fail(display = "Peer is busy")]
+    PeerIsBusy,
     #[fail(display = "{}", 0)]
     Bitfield(BitfieldError),
+    #[fail(display="Block not found")]
+    BlockNotFound,
 }
 
 impl From<io::Error> for PeerError {
@@ -42,6 +47,7 @@ enum PeerState {
 
 #[derive(Clone)]
 pub struct Peer {
+    queue: Arc<Mutex<u8>>,
     bitfield: Arc<RwLock<Vec<u8>>>,
     state: Arc<RwLock<(PeerState, PeerState)>>, //(me, remote)
     sender: Sender<PeerMessage>,
@@ -58,6 +64,7 @@ impl Peer {
         };
         let (sender, receiver) = async_std::sync::channel(10);
         let peer = Peer {
+            queue: Arc::new(Mutex::new(0)),
             bitfield: Arc::new(RwLock::new(vec![])),
             state: Arc::new(RwLock::new((PeerState::Chocked, PeerState::Unchocked))),
             sender: sender.clone(),
@@ -69,7 +76,21 @@ impl Peer {
     pub async fn have(&self, block: u32) -> bool {
         self.bitfield.read().await.have_bit(block)
     }
-
+    pub async fn request(&self, block: u32, offset: u32, length: u32) -> Result<(), PeerError> {
+        {
+            if !self.bitfield.read().await.have_bit(block) {
+                return Err(PeerError::BlockNotFound);
+            }
+        }
+        let mut queue = self.queue.lock().await;
+        if *queue > 5 {
+            Err(PeerError::PeerIsBusy)
+        } else {
+            *queue += 1;
+            self.sender.send(PeerMessage::Request {block, offset, length}).await;
+            Ok(())
+        }
+    }
     async fn daemon<S>(mut self, mut stream: S, cache: CacheClient) -> Result<(), PeerError>
         where S : Stream<Item=PeerMessage> + Unpin {
         //implement keepalive timer
@@ -109,6 +130,8 @@ impl Peer {
                 }
                 Piece { block, offset, data } => {
                     cache.put(block, offset, data).await;
+                    let mut queue = self.queue.lock().await;
+                    *queue = if *queue > 0 { *queue -1 } else {0};
                     None
                 }
                 Cancel { .. } => {
