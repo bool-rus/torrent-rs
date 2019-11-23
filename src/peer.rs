@@ -53,8 +53,8 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub async fn new<C: Cache>(stream: TcpStream, cache: C, handshake: Handshake) -> Result<Self, PeerError>
-    where C: Sync + Send + Unpin + 'static {
+    pub async fn new<C>(stream: TcpStream, cache: C, handshake: Handshake) -> Result<Self, PeerError>
+    where C: Cache + Unpin {
         let mut bytes: Bytes = handshake.clone().into();
         let (mut reader, mut writer) = stream.split();
         writer.write_all(bytes.as_ref()).await?;

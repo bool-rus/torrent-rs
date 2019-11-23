@@ -2,15 +2,29 @@ use bytes::Bytes;
 pub use bip_metainfo::{Info as TorrentInfo, InfoHash, InfoHash as PeerId, InfoHash as NodeId};
 
 pub use super::error::Error;
-use async_std::sync::{Sender, Receiver};
+use std::sync::Arc;
 
 #[async_trait]
-pub trait Cache : Clone + Send {
+pub trait Cache : Clone + Send + Sync + 'static {
     async fn put(&self, index: u32, offset: u32, bytes: Bytes) ;
-    async fn get_block(&self, block: u32) -> Option<Bytes> ;
+    async fn bitfield(&self, block: u32) -> Vec<u8>;
     async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> ;
 }
 
+#[async_trait]
+impl<T: Cache> Cache for Arc<T> {
+    async fn put(&self, index: u32, offset: u32, bytes: Bytes) {
+        (*self).put(index, offset, bytes).await
+    }
+
+    async fn bitfield(&self, block: u32) -> Vec<u8> {
+        (*self).bitfield(block).await
+    }
+
+    async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> {
+        (*self).get_piece(block, offset, length).await
+    }
+}
 
 
 #[cfg(test)]
