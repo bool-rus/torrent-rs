@@ -15,6 +15,7 @@ mod implements;
 mod error;
 mod parser;
 mod peer;
+mod tracker;
 mod io;
 
 pub use faces::*;

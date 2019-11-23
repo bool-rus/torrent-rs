@@ -17,7 +17,7 @@ pub trait Bitfield: AsRef<[u8]> + Sized {
     fn add_bit(&mut self, index: u32) -> Result<(), BitfieldError>;
     fn remove_bit(&mut self, index: u32) -> Result<(), BitfieldError>;
     fn have_bit(&self, index: u32) -> bool;
-    fn interest<T: Bitfield>(&self, rhs: T) -> Result<Self, BitfieldError>;
+    fn interest<T: Bitfield>(&self, rhs: &T) -> Result<Self, BitfieldError>;
 }
 
 impl Bitfield for Vec<u8> {
@@ -71,7 +71,7 @@ impl Bitfield for Vec<u8> {
         (self.get(byte_index).unwrap_or(&0u8).to_owned() & mask) > 0
     }
 
-    fn interest<T: Bitfield>(&self, rhs: T) -> Result<Self, BitfieldError> {
+    fn interest<T: Bitfield>(&self, rhs: &T) -> Result<Self, BitfieldError> {
         let me: &[u8] = self.as_ref();
         let another = rhs.as_ref();
         if me.len() != another.len() {
@@ -286,6 +286,6 @@ mod tests {
 
         let a = vec![0b00000000u8, 0b00011100, 0b11100011];
         let b = vec![0b11100011u8, 0b00011100, 0b00111001];
-        assert_eq!(vec![0b11100011u8, 0b00000000, 0b00011000], a.interest(b).unwrap())
+        assert_eq!(vec![0b11100011u8, 0b00000000, 0b00011000], a.interest(&b).unwrap())
     }
 }

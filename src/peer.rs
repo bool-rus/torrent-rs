@@ -2,7 +2,7 @@ use crate::message::{Handshake, PeerMessage, Bitfield, BitfieldError};
 use bytes::Bytes;
 use crate::{parser, Cache};
 use std::io;
-use async_std::net::{TcpStream};
+use async_std::net::{TcpStream, ToSocketAddrs};
 use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
@@ -52,25 +52,31 @@ pub struct Peer {
     sender: Sender<PeerMessage>,
 }
 
+async fn connect<T: ToSocketAddrs>(addr: T, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError> {
+    let mut stream = TcpStream::connect(addr).await?;
+    let mut bytes: Bytes = handshake.clone().into();
+    let (mut reader, mut writer) = stream.split();
+    writer.write_all(bytes.as_ref()).await?;
+    let response = super::io::read_handshake(&mut reader).await?;
+    if !handshake.validate(&response) {
+        return Err(PeerError::Handshake);
+    };
+    Ok((reader, writer))
+}
+
 impl Peer {
-    pub async fn new<C>(stream: TcpStream, cache: C, handshake: Handshake) -> Result<Self, PeerError>
-    where C: Cache + Unpin {
-        let mut bytes: Bytes = handshake.clone().into();
-        let (mut reader, mut writer) = stream.split();
-        writer.write_all(bytes.as_ref()).await?;
-        let response = super::io::read_handshake(&mut reader).await?;
-        if !handshake.validate(&response) {
-            return Err(PeerError::Handshake);
-        };
-        let (sender, receiver) = async_std::sync::channel(10);
+    pub async fn new<R, W, C>(read: R, write: W, cache: C) -> Result<Self, PeerError>
+    where R: Read + Send + Sync + Unpin + 'static, W: Write + Send + Sync + Unpin + 'static, C: Cache + Unpin {
+        let (mut sender, receiver) = async_std::sync::channel(10);
         let peer = Peer {
             queue: Arc::new(Mutex::new(0)),
             bitfield: Arc::new(RwLock::new(vec![])),
             state: Arc::new(RwLock::new((PeerState::Chocked, PeerState::Unchocked))),
             sender: sender.clone(),
         };
-        task::spawn(Self::sender(MessageSink::new(writer), receiver));
-        task::spawn(peer.clone().daemon(MessageStream::from(reader), cache));
+        task::spawn(Self::sender(MessageSink::new(write), receiver));
+        sender.send(PeerMessage::Bitfield(cache.bitfield().await));
+        task::spawn(peer.clone().daemon(MessageStream::from(read), cache));
         Ok(peer)
     }
     pub async fn request(&self, block: u32, offset: u32, length: u32) -> Result<(), PeerError> {
@@ -112,8 +118,17 @@ impl Peer {
                     None
                 }
                 Bitfield(bitfield) => {
+                    let interest = cache.bitfield().await
+                        .interest(&bitfield).unwrap_or(vec![])
+                        .into_iter().max().unwrap_or(0);
+                    let mut response;
+                    if interest > 0 {
+                        response = PeerMessage::Interested;
+                    } else {
+                        response = PeerMessage::NotInterested;
+                    }
                     *self.bitfield.write().await = bitfield;
-                    None
+                    Some(response)
                 }
                 Request { block, offset, length } => {
                     use PeerState::*;

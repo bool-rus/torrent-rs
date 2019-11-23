@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[async_trait]
 pub trait Cache : Clone + Send + Sync + 'static {
     async fn put(&self, index: u32, offset: u32, bytes: Bytes) ;
-    async fn bitfield(&self, block: u32) -> Vec<u8>;
+    async fn bitfield(&self) -> Vec<u8>;
     async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> ;
 }
 
@@ -17,8 +17,8 @@ impl<T: Cache> Cache for Arc<T> {
         (*self).put(index, offset, bytes).await
     }
 
-    async fn bitfield(&self, block: u32) -> Vec<u8> {
-        (*self).bitfield(block).await
+    async fn bitfield(&self) -> Vec<u8> {
+        (*self).bitfield().await
     }
 
     async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> {
