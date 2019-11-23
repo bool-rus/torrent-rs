@@ -1,6 +1,6 @@
 use crate::message::{Handshake, PeerMessage, Bitfield, BitfieldError};
 use bytes::Bytes;
-use crate::{parser, Cache, CacheClient};
+use crate::{parser, Cache};
 use std::io;
 use async_std::net::{TcpStream};
 use async_std::prelude::*;
@@ -53,7 +53,8 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub async fn new(stream: TcpStream, cache: CacheClient, handshake: Handshake) -> Result<Self, PeerError> {
+    pub async fn new<C: Cache>(stream: TcpStream, cache: C, handshake: Handshake) -> Result<Self, PeerError>
+    where C: Sync + Send + Unpin + 'static {
         let mut bytes: Bytes = handshake.clone().into();
         let (mut reader, mut writer) = stream.split();
         writer.write_all(bytes.as_ref()).await?;
@@ -72,9 +73,6 @@ impl Peer {
         task::spawn(peer.clone().daemon(MessageStream::from(reader), cache));
         Ok(peer)
     }
-    pub async fn have(&self, block: u32) -> bool {
-        self.bitfield.read().await.have_bit(block)
-    }
     pub async fn request(&self, block: u32, offset: u32, length: u32) -> Result<(), PeerError> {
         {
             if !self.bitfield.read().await.have_bit(block) {
@@ -90,8 +88,8 @@ impl Peer {
             Ok(())
         }
     }
-    async fn daemon<S>(mut self, mut stream: S, cache: CacheClient) -> Result<(), PeerError>
-        where S : Stream<Item=PeerMessage> + Unpin {
+    async fn daemon<S, C>(mut self, mut stream: S, cache: C) -> Result<(), PeerError>
+        where S : Stream<Item=PeerMessage> + Unpin , C: Cache + Unpin {
         //implement keepalive timer
         while let Some(msg) = stream.next().await {
             use PeerMessage::*;

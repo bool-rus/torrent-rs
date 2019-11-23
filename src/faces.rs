@@ -6,44 +6,11 @@ use async_std::sync::{Sender, Receiver};
 
 #[async_trait]
 pub trait Cache : Clone + Send {
-    async fn put(self, index: u32, offset: u32, bytes: Bytes) -> Self ;
-    async fn get_block(self, block: u32) -> Option<Bytes> ;
-    async fn get_piece(self, block: u32, offset: u32, length: u32) -> bool ;
+    async fn put(&self, index: u32, offset: u32, bytes: Bytes) ;
+    async fn get_block(&self, block: u32) -> Option<Bytes> ;
+    async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> ;
 }
 
-pub enum CacheRequest {
-    Put { index: u32, offset: u32, bytes: Bytes },
-    GetBlock { block: u32, callback: Sender<Option<Bytes>>},
-    GetPiece { block: u32, offset: u32, length: u32, callback: Sender<Option<Bytes>> }
-}
-
-pub struct CacheClient {
-    sender: Sender<CacheRequest>,
-    callback: Sender<Option<Bytes>>,
-    receiver: Receiver<Option<Bytes>>,
-}
-
-impl CacheClient {
-    pub fn new(sender: Sender<CacheRequest>) -> Self {
-        let (callback,receiver) = async_std::sync::channel(1);
-        CacheClient { sender, callback, receiver }
-    }
-    pub async fn put(&self, index: u32, offset: u32, bytes: Bytes) {
-        self.sender.send(CacheRequest::Put{index, offset, bytes}).await;
-    }
-
-    pub async fn get_block(&self, block: u32) -> Option<Bytes> {
-        let callback = self.callback.clone();
-        self.sender.send(CacheRequest::GetBlock {block, callback}).await;
-        self.receiver.recv().await.unwrap()
-    }
-
-    pub async fn get_piece(&self, block: u32, offset: u32, length: u32) -> Option<Bytes> {
-        let callback = self.callback.clone();
-        self.sender.send(CacheRequest::GetPiece {block, offset, length, callback}).await;
-        self.receiver.recv().await.unwrap()
-    }
-}
 
 
 #[cfg(test)]
