@@ -10,7 +10,6 @@ use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
 use futures_util::{AsyncReadExt, StreamExt};
 use futures_util::SinkExt;
 use crate::io::*;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Debug, Fail)]
 pub enum PeerError {
