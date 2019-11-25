@@ -7,8 +7,7 @@ use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
 use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
-use futures_util::{AsyncReadExt, StreamExt};
-use futures_util::SinkExt;
+use futures_util::{AsyncReadExt, StreamExt, SinkExt, future::join};
 use crate::io::*;
 
 #[derive(Debug, Fail)]
@@ -45,6 +44,8 @@ enum PeerState {
 }
 
 #[derive(Clone)]
+/// Handle for connected peer
+///
 pub struct Peer {
     queue: Arc<Mutex<u8>>,
     bitfield: Arc<RwLock<Vec<u8>>>,
@@ -52,13 +53,15 @@ pub struct Peer {
     sender: Sender<PeerMessage>,
 }
 
-async fn connect<T: ToSocketAddrs>(addr: T, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError> {
-    let mut stream = TcpStream::connect(addr).await?;
+async fn handshake(stream: TcpStream, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError> {
     let mut bytes: Bytes = handshake.clone().into();
     let (mut reader, mut writer) = stream.split();
     writer.write_all(bytes.as_ref()).await?;
-    let response = super::io::read_handshake(&mut reader).await?;
-    if !handshake.validate(&response) {
+    let (_, response) = join(
+        writer.write_all(bytes.as_ref()),
+        super::io::read_handshake(&mut reader)
+    ).await;
+    if !handshake.validate(&response?) {
         return Err(PeerError::Handshake);
     };
     Ok((reader, writer))
@@ -75,7 +78,7 @@ impl Peer {
             sender: sender.clone(),
         };
         task::spawn(Self::sender(MessageSink::new(write), receiver));
-        sender.send(PeerMessage::Bitfield(cache.bitfield().await));
+        sender.send(PeerMessage::Bitfield(cache.bitfield().await)).await;
         task::spawn(peer.clone().daemon(MessageStream::from(read), cache));
         Ok(peer)
     }
@@ -119,10 +122,10 @@ impl Peer {
                 }
                 Bitfield(bitfield) => {
                     let interest = cache.bitfield().await
-                        .interest(&bitfield).unwrap_or(vec![])
-                        .into_iter().max().unwrap_or(0);
+                        .interest(&bitfield).unwrap_or(vec![]);
+                    let interest = interest.iter().find(|&x|*x > 0);
                     let mut response;
-                    if interest > 0 {
+                    if interest.is_some() {
                         response = PeerMessage::Interested;
                     } else {
                         response = PeerMessage::NotInterested;
@@ -143,7 +146,7 @@ impl Peer {
                 Piece { block, offset, data } => {
                     cache.put(block, offset, data).await;
                     let mut queue = self.queue.lock().await;
-                    *queue = if *queue > 0 { *queue -1 } else {0};
+                    *queue = if *queue > 0 { *queue -  1 } else {0};
                     None
                 }
                 Cancel { .. } => {

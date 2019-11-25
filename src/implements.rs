@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::HashMap;
 use futures_util::future::{AbortHandle, Abortable, AbortRegistration};
-use crate::peer::Peer;
+use crate::peer::{Peer, PeerError};
 
 
 pub struct Connection<T: Cache> {
@@ -13,8 +13,13 @@ impl<T: Cache> Connection<T> {
     async fn new(cache: T, info: TorrentInfo, abort: AbortRegistration) -> Result<Connection<T>, Error> {
         unimplemented!()
     }
-    async fn download(&self, index: u32) -> bool {
-        unimplemented!();
+    async fn download(&self, block: u32, offset: u32, length: u32) -> bool {
+        for p in self.peers.iter() {
+            if p.request(block, offset, length).await.is_ok() {
+                return true
+            }
+        }
+        false
     }
 }
 
@@ -23,17 +28,9 @@ pub struct Service {
 }
 
 
-pub struct Handle;
-
-impl Handle {
-    async fn download(&self, index: usize) -> Bytes {
-
-        unimplemented!()
-    }
-}
 
 impl Service {
-    fn start<C: Cache>(&mut self, cache: C, info: TorrentInfo) -> Handle {
+    fn start<C: Cache>(&mut self, cache: C, info: TorrentInfo) {
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         self.started.insert(info.info_hash(), abort_handle);
         Connection::new(cache, info, abort_registration);
