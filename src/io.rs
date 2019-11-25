@@ -137,13 +137,18 @@ impl<W: Write + Unpin> Sink<PeerMessage> for MessageSink<W> {
 }
 
 
-pub async fn read_handshake<T: ReadExt + Unpin>(read: &mut T) -> Result<Handshake, std::io::Error> {
+pub(crate) async fn read_handshake<T: ReadExt + Unpin>(read: &mut T) -> Result<Handshake, std::io::Error> {
     let mut buf = [0u8];
     read.read_exact(&mut buf).await?;
     let [protocol_size] = buf;
-    let mut buf = BytesMut::with_capacity(super::message::HANDSHAKE_DEFAULT_SIZE - 1 + protocol_size as usize);
+    let size = super::message::HANDSHAKE_DEFAULT_SIZE - 1 + protocol_size as usize;
+    let mut buf = vec![0u8; size];
     read.read_exact(buf.as_mut()).await?;
-    let (_, handshake) = parser::parse_handshake(buf.as_ref(), protocol_size).unwrap();
+    let res = parser::parse_handshake(buf.as_ref(), protocol_size);
+    if let Err(e) = res {
+        panic!("ERR buf \n{:?}\nERR\n{:?}",buf, e);
+    }
+    let (_, handshake) = res.unwrap();
     Ok(handshake)
 }
 
