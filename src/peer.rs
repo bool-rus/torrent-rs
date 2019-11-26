@@ -9,6 +9,7 @@ use async_std::task;
 use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
 use futures_util::{AsyncReadExt, StreamExt, SinkExt, future::join};
 use crate::io::*;
+use futures_util::future::try_join3;
 
 #[derive(Debug, Fail)]
 pub enum PeerError {
@@ -53,7 +54,8 @@ pub struct Peer {
     sender: Sender<PeerMessage>,
 }
 
-async fn handshake(stream: TcpStream, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError> {
+async fn handshake<RW>(stream: RW, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError>
+where RW: Read + Write + Send + Sync + Unpin + 'static {
     let mut bytes: Bytes = handshake.clone().into();
     let (mut reader, mut writer) = stream.split();
     let (_, response) = join(
@@ -217,4 +219,25 @@ mod test {
         th.join().unwrap()?;
         Ok(())
     }
+    #[test]
+    fn test_connect_handshake_err() -> Result<(), PeerError> {
+        let th = thread::spawn(|| {
+            task::block_on(listen(make_h1()))
+        });
+        match task::block_on(connect(make_h2())) {
+            Err(PeerError::Handshake) => {
+                //good err
+            },
+            _ => unreachable!()
+        }
+        match th.join().unwrap() {
+            Err(PeerError::Handshake) => {
+                //good err
+            },
+            _ => unreachable!()
+        }
+        Ok(())
+    }
+
+
 }

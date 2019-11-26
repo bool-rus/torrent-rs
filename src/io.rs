@@ -7,6 +7,7 @@ use async_std::io::prelude::*;
 use async_std::sync::{Sender, Receiver};
 use futures_util::stream::Stream;
 use crate::parser;
+use futures_util::io::{AsyncRead, Error};
 
 enum State<T> {
     Done,
@@ -173,14 +174,25 @@ impl<Q, A> MessageChannel<Q, A> {
     }
 }
 
+
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use async_std::task;
     use bytes::{BytesMut, BufMut};
     use nom::AsBytes;
     use futures_util::StreamExt;
+    use async_std::prelude::*;
+    use async_std::io::prelude::*;
 
+
+    impl<Q> Read for MessageChannel<Q, u8> {
+        fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize, Error>> {
+            let mut recv_fut = self.1.recv();
+            //let poll = Future::poll(Pin::new(&mut recv_fut), cx);
+            unimplemented!()
+        }
+    }
     #[test]
     fn test_message_channel() {
         task::block_on(async {
