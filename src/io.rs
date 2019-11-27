@@ -192,14 +192,12 @@ pub(crate) mod test {
             match Pin::new(&mut fut).poll(cx) {
                 Poll::Ready(Some(byte)) => {
                     buf[0]=byte;
-                    println!("readed: {}", byte as char);
                     Poll::Ready(Ok(1))
                 },
                 Poll::Ready(None) => {
                     unimplemented!()
                 },
                 Poll::Pending => {
-                    println!("pending read");
                     Poll::Pending
                 },
             }
@@ -211,7 +209,6 @@ pub(crate) mod test {
             match unsafe { Pin::new_unchecked(&mut fut) }.poll(cx) {
                 Poll::Ready(_) => Poll::Ready(Ok(1)),
                 Poll::Pending => {
-                    println!("pending write, buf: {}", std::str::from_utf8(buf).unwrap());
                     Poll::Pending
                 },
             }

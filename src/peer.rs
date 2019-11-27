@@ -1,15 +1,13 @@
-use crate::message::{Handshake, PeerMessage, Bitfield, BitfieldError};
+use crate::message::*;
 use bytes::Bytes;
-use crate::{parser, Cache};
+use crate::{Cache};
 use std::io;
-use async_std::net::{TcpStream, ToSocketAddrs};
 use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
 use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
-use futures_util::{AsyncReadExt, StreamExt, SinkExt, future::join};
+use futures_util::{StreamExt, SinkExt, future::join};
 use crate::io::*;
-use futures_util::future::try_join3;
 
 #[derive(Debug, Fail)]
 pub enum PeerError {
@@ -55,24 +53,24 @@ pub struct Peer {
 }
 
 
-async fn handshake<R, W>(reader: &mut R, writer: &mut W, handshake: Handshake) -> Result<(), PeerError>
-where R: Read + Send + Sync + Unpin + 'static,
-      W: Write + Send + Sync + Unpin + 'static {
-    let mut bytes: Bytes = handshake.clone().into();
-    let (_, response) = join(
-        writer.write_all(bytes.as_ref()),
-        read_handshake(reader)
-    ).await;
-    if !handshake.validate(&response?) {
-        return Err(PeerError::Handshake);
-    };
-    Ok(())
-}
-
 impl Peer {
-    pub async fn new<R, W, C>(read: R, write: W, cache: C) -> Result<Self, PeerError>
+    async fn do_handshake<R, W>(reader: &mut R, writer: &mut W, handshake: Handshake) -> Result<(), PeerError>
+        where R: Read + Send + Sync + Unpin + 'static,
+              W: Write + Send + Sync + Unpin + 'static {
+        let mut bytes: Bytes = handshake.clone().into();
+        let (_, response) = join(
+            writer.write_all(bytes.as_ref()),
+            read_handshake(reader)
+        ).await;
+        if !handshake.validate(&response?) {
+            return Err(PeerError::Handshake);
+        };
+        Ok(())
+    }
+    pub async fn new<R, W, C>(mut read: R, mut write: W, cache: C, handshake: Handshake) -> Result<Self, PeerError>
         where R: Read + Send + Sync + Unpin + 'static,
               W: Write + Send + Sync + Unpin + 'static, C: Cache + Unpin {
+        Self::do_handshake(&mut read, &mut write, handshake).await;
         let (mut sender, receiver) = async_std::sync::channel(10);
         let peer = Peer {
             queue: Arc::new(Mutex::new(0)),
@@ -192,7 +190,7 @@ mod test {
     }
     fn make_h1_2() -> Handshake {
         Handshake {
-            protocol: "123456789012345678901234567890123".to_string(),
+            protocol: "bnakldsfygn askjfysnfgdfklsjdfshj".to_string(),
             extentions: ['x' as u8; 8],
             info_hash: ['i' as u8; 20].into(),
             peer_id: ['z' as u8; 20].into(),
@@ -214,10 +212,10 @@ mod test {
         let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
         let th = thread::spawn(move || {
             let (mut r,mut w) = remote.split();
-            task::block_on( handshake(&mut r, &mut w, make_h1()))
+            task::block_on( Peer::do_handshake(&mut r, &mut w, make_h1()))
         });
         let (mut r, mut w) = me.split();
-        task::block_on(handshake(&mut r, &mut w, make_h1_2()))?;
+        task::block_on(Peer::do_handshake(&mut r, &mut w, make_h1_2()))?;
         th.join().unwrap()?;
         Ok(())
     }
@@ -226,10 +224,10 @@ mod test {
         let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
         let th = thread::spawn(move || {
             let (mut r,mut w) = remote.split();
-            task::block_on( handshake(&mut r, &mut w, make_h2()))
+            task::block_on( Peer::do_handshake(&mut r, &mut w, make_h2()))
         });
         let (mut r, mut w) = me.split();
-        let result = task::block_on(handshake(&mut r, &mut w, make_h1()));
+        let result = task::block_on(Peer::do_handshake(&mut r, &mut w, make_h1()));
         match result {
             Err(PeerError::Handshake) => {
                 //good err
