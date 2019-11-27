@@ -181,16 +181,48 @@ pub(crate) mod test {
     use async_std::task;
     use bytes::{BytesMut, BufMut};
     use nom::AsBytes;
-    use futures_util::StreamExt;
     use async_std::prelude::*;
     use async_std::io::prelude::*;
 
 
     impl<Q> Read for MessageChannel<Q, u8> {
         fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize, Error>> {
-            let mut recv_fut = self.1.recv();
-            //let poll = Future::poll(Pin::new(&mut recv_fut), cx);
-            unimplemented!()
+            let mut receiver = &self.1;
+            let mut fut = receiver.recv();
+            match Pin::new(&mut fut).poll(cx) {
+                Poll::Ready(Some(byte)) => {
+                    buf[0]=byte;
+                    println!("readed: {}", byte as char);
+                    Poll::Ready(Ok(1))
+                },
+                Poll::Ready(None) => {
+                    unimplemented!()
+                },
+                Poll::Pending => {
+                    println!("pending read");
+                    Poll::Pending
+                },
+            }
+        }
+    }
+    impl<A> Write for MessageChannel<u8, A> {
+        fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, Error>> {
+            let mut fut = self.send(buf[0]);
+            match unsafe { Pin::new_unchecked(&mut fut) }.poll(cx) {
+                Poll::Ready(_) => Poll::Ready(Ok(1)),
+                Poll::Pending => {
+                    println!("pending write, buf: {}", std::str::from_utf8(buf).unwrap());
+                    Poll::Pending
+                },
+            }
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+            Poll::Ready(Ok(()))
         }
     }
     #[test]

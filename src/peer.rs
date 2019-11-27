@@ -54,23 +54,25 @@ pub struct Peer {
     sender: Sender<PeerMessage>,
 }
 
-async fn handshake<RW>(stream: RW, handshake: Handshake) -> Result<(impl Read, impl Write), PeerError>
-where RW: Read + Write + Send + Sync + Unpin + 'static {
+
+async fn handshake<R, W>(reader: &mut R, writer: &mut W, handshake: Handshake) -> Result<(), PeerError>
+where R: Read + Send + Sync + Unpin + 'static,
+      W: Write + Send + Sync + Unpin + 'static {
     let mut bytes: Bytes = handshake.clone().into();
-    let (mut reader, mut writer) = stream.split();
     let (_, response) = join(
         writer.write_all(bytes.as_ref()),
-        read_handshake(&mut reader)
+        read_handshake(reader)
     ).await;
     if !handshake.validate(&response?) {
         return Err(PeerError::Handshake);
     };
-    Ok((reader, writer))
+    Ok(())
 }
 
 impl Peer {
     pub async fn new<R, W, C>(read: R, write: W, cache: C) -> Result<Self, PeerError>
-        where R: Read + Send + Sync + Unpin + 'static, W: Write + Send + Sync + Unpin + 'static, C: Cache + Unpin {
+        where R: Read + Send + Sync + Unpin + 'static,
+              W: Write + Send + Sync + Unpin + 'static, C: Cache + Unpin {
         let (mut sender, receiver) = async_std::sync::channel(10);
         let peer = Peer {
             queue: Arc::new(Mutex::new(0)),
@@ -175,7 +177,8 @@ impl Peer {
 #[cfg(test)]
 mod test {
     use super::*;
-    use async_std::net::TcpListener;
+    use async_std::net::{TcpListener, TcpStream};
+    use futures_util::{AsyncWriteExt, AsyncReadExt};
     use crate::*;
     use std::thread;
 
@@ -185,6 +188,14 @@ mod test {
             extentions: ['e' as u8; 8],
             info_hash: ['i' as u8; 20].into(),
             peer_id: ['p' as u8; 20].into(),
+        }
+    }
+    fn make_h1_2() -> Handshake {
+        Handshake {
+            protocol: "123456789012345678901234567890123".to_string(),
+            extentions: ['x' as u8; 8],
+            info_hash: ['i' as u8; 20].into(),
+            peer_id: ['z' as u8; 20].into(),
         }
     }
 
@@ -197,44 +208,41 @@ mod test {
         }
     }
 
-    async fn listen(h: Handshake) -> Result<(impl Read, impl Write), PeerError> {
-        let mut listener = TcpListener::bind("127.0.0.1:64343").await?;
-        let (stream, _) = listener.accept().await?;
-        let res = handshake(stream, h).await;
-        res
-    }
-
-    async fn connect(h: Handshake) -> Result<(impl Read, impl Write), PeerError> {
-        let stream = TcpStream::connect("127.0.0.1:64343").await?;
-        let res = handshake(stream, h).await;
-        res
-    }
 
     #[test]
     fn test_connect_handshake_ok() -> Result<(), PeerError> {
-        let th = thread::spawn(|| {
-            task::block_on(listen(make_h1()))
+        let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
+        let th = thread::spawn(move || {
+            let (mut r,mut w) = remote.split();
+            task::block_on( handshake(&mut r, &mut w, make_h1()))
         });
-        task::block_on(connect(make_h1()))?;
+        let (mut r, mut w) = me.split();
+        task::block_on(handshake(&mut r, &mut w, make_h1_2()))?;
         th.join().unwrap()?;
         Ok(())
     }
     #[test]
     fn test_connect_handshake_err() -> Result<(), PeerError> {
-        let th = thread::spawn(|| {
-            task::block_on(listen(make_h1()))
+        let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
+        let th = thread::spawn(move || {
+            let (mut r,mut w) = remote.split();
+            task::block_on( handshake(&mut r, &mut w, make_h2()))
         });
-        match task::block_on(connect(make_h2())) {
+        let (mut r, mut w) = me.split();
+        let result = task::block_on(handshake(&mut r, &mut w, make_h1()));
+        match result {
             Err(PeerError::Handshake) => {
                 //good err
             },
-            _ => unreachable!()
+            Ok(_) => unreachable!(),
+            obj => {obj?;}
         }
         match th.join().unwrap() {
             Err(PeerError::Handshake) => {
                 //good err
             },
-            _ => unreachable!()
+            Ok(_) => unreachable!(),
+            obj => {obj?;}
         }
         Ok(())
     }
