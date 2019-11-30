@@ -2,6 +2,7 @@ use crate::message::*;
 use bytes::Bytes;
 use crate::{Cache, PeerId};
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
@@ -51,6 +52,7 @@ pub struct PeerHandle {
     bitfield: Arc<RwLock<Vec<u8>>>,
     state: Arc<RwLock<(PeerState, PeerState)>>, //(me, remote)
     sender: Sender<PeerMessage>,
+    stats: Arc<(AtomicU64, AtomicU64)>, //(me, remote)
 }
 
 
@@ -82,6 +84,7 @@ impl PeerHandle {
             bitfield: Arc::new(RwLock::new(vec![])),
             state: Arc::new(RwLock::new((PeerState::Chocked, PeerState::Unchocked))),
             sender: sender.clone(),
+            stats: Arc::new((AtomicU64::new(0u64), AtomicU64::new(0u64))),
         };
         task::spawn(Self::sender(MessageSink::new(write), receiver));
         sender.send(PeerMessage::Bitfield(cache.bitfield().await)).await;
@@ -92,6 +95,12 @@ impl PeerHandle {
         self.peer_id.clone()
     }
     pub async fn request(&self, block: u32, offset: u32, length: u32) -> Result<(), PeerError> {
+        {
+            match *self.state.read().await {
+                (PeerState::Unchocked, PeerState::Unchocked) => {},
+                _ => return Err(PeerError::PeerIsBusy)
+            }
+        }
         {
             if !self.bitfield.read().await.have_bit(block) {
                 return Err(PeerError::BlockNotFound);
@@ -105,6 +114,18 @@ impl PeerHandle {
             self.sender.send(PeerMessage::Request { block, offset, length }).await;
             Ok(())
         }
+    }
+    pub async fn choke(&self) {
+        let mut state = self.state.write().await;
+        state.1 = PeerState::Chocked;
+    }
+    pub async fn unchoke(&self) {
+        let mut state = self.state.write().await;
+        state.0 = PeerState::Unchocked;
+    }
+    pub fn stats(&self) -> (u64, u64) {
+        let (sended, received) = self.stats.as_ref();
+        (sended.load(Ordering::Relaxed), received.load(Ordering::Relaxed))
     }
     async fn daemon<S, C>(mut self, mut stream: S, cache: C) -> Result<(), PeerError>
         where S: Stream<Item=PeerMessage> + Unpin, C: Cache + Unpin {
@@ -147,12 +168,16 @@ impl PeerHandle {
                     match *self.state.read().await {
                         (Unchocked, Unchocked) => match cache.get_piece(block, offset, length).await {
                             None => None,
-                            Some(data) => Some(Piece { block, offset, data }),
+                            Some(data) => {
+                                self.stats.0.fetch_add(data.len() as u64, Ordering::Relaxed);
+                                Some(Piece { block, offset, data })
+                            },
                         },
                         _ => None
                     }
                 }
                 Piece { block, offset, data } => {
+                    self.stats.1.fetch_add(data.len() as u64, Ordering::Relaxed);
                     cache.put(block, offset, data).await;
                     let mut queue = self.queue.lock().await;
                     *queue = if *queue > 0 { *queue - 1 } else { 0 };
@@ -252,6 +277,5 @@ mod test {
         }
         Ok(())
     }
-
 
 }
