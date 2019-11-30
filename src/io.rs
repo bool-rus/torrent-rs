@@ -187,9 +187,8 @@ pub(crate) mod test {
 
     impl<Q> Read for MessageChannel<Q, u8> {
         fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<Result<usize, Error>> {
-            let mut receiver = &self.1;
-            let mut fut = receiver.recv();
-            match Pin::new(&mut fut).poll(cx) {
+            let mut fut = self.recv();
+            match unsafe { Pin::new_unchecked(&mut fut) }.poll(cx) {
                 Poll::Ready(Some(byte)) => {
                     buf[0]=byte;
                     Poll::Ready(Ok(1))

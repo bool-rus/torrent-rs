@@ -1,12 +1,12 @@
 use crate::message::*;
 use bytes::Bytes;
-use crate::{Cache};
+use crate::{Cache, PeerId};
 use std::io;
 use async_std::prelude::*;
 use async_std::io::prelude::*;
 use async_std::task;
 use async_std::sync::{Arc, Sender, Receiver, RwLock, Mutex};
-use futures_util::{StreamExt, SinkExt, future::join};
+use futures_util::{StreamExt, SinkExt, future::join, AsyncReadExt};
 use crate::io::*;
 
 #[derive(Debug, Fail)]
@@ -45,7 +45,8 @@ enum PeerState {
 #[derive(Clone)]
 /// Handle for connected peer
 ///
-pub struct Peer {
+pub struct PeerHandle {
+    peer_id: PeerId,
     queue: Arc<Mutex<u8>>,
     bitfield: Arc<RwLock<Vec<u8>>>,
     state: Arc<RwLock<(PeerState, PeerState)>>, //(me, remote)
@@ -53,8 +54,8 @@ pub struct Peer {
 }
 
 
-impl Peer {
-    async fn do_handshake<R, W>(reader: &mut R, writer: &mut W, handshake: Handshake) -> Result<(), PeerError>
+impl PeerHandle {
+    async fn do_handshake<R, W>(reader: &mut R, writer: &mut W, handshake: Handshake) -> Result<Handshake, PeerError>
         where R: Read + Send + Sync + Unpin + 'static,
               W: Write + Send + Sync + Unpin + 'static {
         let mut bytes: Bytes = handshake.clone().into();
@@ -62,17 +63,21 @@ impl Peer {
             writer.write_all(bytes.as_ref()),
             read_handshake(reader)
         ).await;
-        if !handshake.validate(&response?) {
-            return Err(PeerError::Handshake);
-        };
-        Ok(())
+        let response = response?;
+        if handshake.validate(&response) {
+            Ok(response)
+        } else {
+            Err(PeerError::Handshake)
+        }
     }
-    pub async fn new<R, W, C>(mut read: R, mut write: W, cache: C, handshake: Handshake) -> Result<Self, PeerError>
-        where R: Read + Send + Sync + Unpin + 'static,
-              W: Write + Send + Sync + Unpin + 'static, C: Cache + Unpin {
-        Self::do_handshake(&mut read, &mut write, handshake).await;
+    pub async fn new<S, C>(stream: S, cache: C, handshake: Handshake) -> Result<Self, PeerError>
+        where S: Read + Write + Send + Sync + Unpin + 'static,
+              C: Cache + Unpin {
+        let (mut read, mut write) = stream.split();
+        let response_handshake = Self::do_handshake(&mut read, &mut write, handshake).await?;
         let (mut sender, receiver) = async_std::sync::channel(10);
-        let peer = Peer {
+        let peer = PeerHandle {
+            peer_id: response_handshake.peer_id,
             queue: Arc::new(Mutex::new(0)),
             bitfield: Arc::new(RwLock::new(vec![])),
             state: Arc::new(RwLock::new((PeerState::Chocked, PeerState::Unchocked))),
@@ -82,6 +87,9 @@ impl Peer {
         sender.send(PeerMessage::Bitfield(cache.bitfield().await)).await;
         task::spawn(peer.clone().daemon(MessageStream::from(read), cache));
         Ok(peer)
+    }
+    pub fn get_id(&self) -> PeerId {
+        self.peer_id.clone()
     }
     pub async fn request(&self, block: u32, offset: u32, length: u32) -> Result<(), PeerError> {
         {
@@ -212,10 +220,10 @@ mod test {
         let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
         let th = thread::spawn(move || {
             let (mut r,mut w) = remote.split();
-            task::block_on( Peer::do_handshake(&mut r, &mut w, make_h1()))
+            task::block_on( PeerHandle::do_handshake(&mut r, &mut w, make_h1()))
         });
         let (mut r, mut w) = me.split();
-        task::block_on(Peer::do_handshake(&mut r, &mut w, make_h1_2()))?;
+        task::block_on(PeerHandle::do_handshake(&mut r, &mut w, make_h1_2()))?;
         th.join().unwrap()?;
         Ok(())
     }
@@ -224,10 +232,10 @@ mod test {
         let (me, remote) = MessageChannel::<u8,u8>::with_capacity(1024);
         let th = thread::spawn(move || {
             let (mut r,mut w) = remote.split();
-            task::block_on( Peer::do_handshake(&mut r, &mut w, make_h2()))
+            task::block_on( PeerHandle::do_handshake(&mut r, &mut w, make_h2()))
         });
         let (mut r, mut w) = me.split();
-        let result = task::block_on(Peer::do_handshake(&mut r, &mut w, make_h1()));
+        let result = task::block_on(PeerHandle::do_handshake(&mut r, &mut w, make_h1()));
         match result {
             Err(PeerError::Handshake) => {
                 //good err

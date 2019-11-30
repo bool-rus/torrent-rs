@@ -1,5 +1,5 @@
 use bytes::Bytes;
-pub use bip_metainfo::{Info as TorrentInfo, InfoHash, InfoHash as PeerId, InfoHash as NodeId};
+pub use bip_metainfo::{Info as TorrentInfo, Metainfo, InfoHash, InfoHash as PeerId, InfoHash as NodeId};
 
 pub use super::error::Error;
 use std::sync::Arc;
