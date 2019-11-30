@@ -4,10 +4,25 @@ pub use bip_metainfo::{Info as TorrentInfo, Metainfo, InfoHash, InfoHash as Peer
 pub use super::error::Error;
 use std::sync::Arc;
 use async_std::net::ToSocketAddrs;
+pub use crate::message::TorrentExtentions;
+use crate::message::Handshake;
 
 #[derive(Clone)]
 pub struct TorrentConfig {
-    pub bind: Arc<dyn ToSocketAddrs>,
+    pub peer_id: PeerId,
+    pub protocol: String,
+    pub extentions: TorrentExtentions,
+}
+
+impl TorrentConfig {
+    pub fn make_handshake(&self, info_hash: InfoHash) -> Handshake {
+        Handshake {
+            protocol: self.protocol.clone(),
+            extentions: self.extentions.clone(),
+            info_hash,
+            peer_id: self.peer_id.clone()
+        }
+    }
 }
 
 #[async_trait]

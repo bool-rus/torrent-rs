@@ -19,7 +19,8 @@ pub struct Peer {
 
 #[derive(Clone)]
 pub struct Connection<T> {
-    handshake: Handshake,
+    config: TorrentConfig,
+    info_hash: InfoHash,
     cache: T,
     handles: Arc<RwLock<HashMap<PeerId, PeerHandle>>>,
 }
@@ -27,16 +28,12 @@ unsafe impl<T:Send> Send for Connection<T> {}
 unsafe impl<T:Sync> Sync for Connection<T> {}
 
 impl<T: Cache + Unpin> Connection<T> {
-    fn new<A>(cache: T, peers: Vec<Peer>, listen: A, info_hash: InfoHash) -> Self {
+    fn new(cache: T, peers: Vec<Peer>, info_hash: InfoHash, config: TorrentConfig) -> Self {
         let handles = Arc::new(RwLock::new(Default::default()));
-        let handshake = Handshake {
-            protocol: "".to_string(), //TODO implement it
-            extentions: [1u8;8], //TODO implement it
-            info_hash,
-            peer_id: [1;20].into() //TODO implement it
-        };
+
         let connection = Connection {
-            handshake: handshake.clone(),
+            config,
+            info_hash,
             cache: cache.clone(),
             handles: handles.clone()
         };
@@ -54,7 +51,11 @@ impl<T: Cache + Unpin> Connection<T> {
     where S: Read + Write + Unpin + Send + Sync + 'static {
         let handles = self.handles.write().await;
 
-        let handle =  PeerHandle::new(stream, self.cache.clone(), self.handshake.clone()).await?;
+        let handle =  PeerHandle::new(
+            stream,
+            self.cache.clone(),
+            self.config.make_handshake(self.info_hash)
+        ).await?;
         self.handles.write().await.insert(handle.get_id(), handle);
         Ok(())
     }
@@ -67,6 +68,6 @@ impl<T: Cache + Unpin> Connection<T> {
         false
     }
     pub fn stop(&self) {
-
+        unimplemented!()
     }
 }
