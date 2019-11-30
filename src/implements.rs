@@ -2,10 +2,10 @@ use super::*;
 use std::collections::HashMap;
 use futures_util::future::{AbortHandle, Abortable, AbortRegistration};
 use crate::peer::{PeerHandle, PeerError};
-use std::net::IpAddr;
+use std::net::{IpAddr, TcpListener};
 use async_std::sync::{Arc, RwLock};
 use async_std::task;
-use async_std::net::TcpStream;
+use async_std::net::{TcpStream, ToSocketAddrs};
 use async_std::io::prelude::*;
 use futures_util::AsyncReadExt;
 use crate::message::Handshake;
@@ -27,7 +27,7 @@ unsafe impl<T:Send> Send for Connection<T> {}
 unsafe impl<T:Sync> Sync for Connection<T> {}
 
 impl<T: Cache + Unpin> Connection<T> {
-    fn new<A>(cache: T, peers: Vec<Peer>, listen: A, info_hash: InfoHash, abort: AbortRegistration) -> Self {
+    fn new<A>(cache: T, peers: Vec<Peer>, listen: A, info_hash: InfoHash) -> Self {
         let handles = Arc::new(RwLock::new(Default::default()));
         let handshake = Handshake {
             protocol: "".to_string(), //TODO implement it
@@ -66,30 +66,7 @@ impl<T: Cache + Unpin> Connection<T> {
         }
         false
     }
-}
+    pub fn stop(&self) {
 
-pub struct Service {
-    started: HashMap<InfoHash, AbortHandle>,
-}
-
-
-
-impl Service {
-    fn start<C: Cache>(&mut self, cache: C, info: TorrentInfo) {
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        self.started.insert(info.info_hash(), abort_handle);
-        //Connection::new(cache, info, abort_registration);
-        unimplemented!()
-    }
-    fn running(&self) -> Vec<&InfoHash> {
-        self.started.keys().into_iter().collect()
-    }
-    fn stop(&mut self, hash: &InfoHash) -> bool {
-        if let Some(handle) = self.started.remove(hash) {
-            handle.abort();
-            true
-        } else {
-            false
-        }
     }
 }

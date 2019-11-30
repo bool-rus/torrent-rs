@@ -3,6 +3,12 @@ pub use bip_metainfo::{Info as TorrentInfo, Metainfo, InfoHash, InfoHash as Peer
 
 pub use super::error::Error;
 use std::sync::Arc;
+use async_std::net::ToSocketAddrs;
+
+#[derive(Clone)]
+pub struct TorrentConfig {
+    pub bind: Arc<dyn ToSocketAddrs>,
+}
 
 #[async_trait]
 pub trait Cache : Clone + Send + Sync + 'static {
